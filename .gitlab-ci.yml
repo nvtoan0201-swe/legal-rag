@@ -3,6 +3,7 @@ image: ghcr.io/astral-sh/uv:python3.11-bookworm
 stages:
   - lint
   - test
+  - eval
 
 lint:
   stage: lint
@@ -15,4 +16,34 @@ test:
   stage: test
   script:
     - uv sync
-    - uv run pytest
+    - uv run pytest -q
+
+# End-to-end smoke test of the pipeline with the deterministic offline embedder
+# (no 2 GB model download on shared runners). Real numbers are produced locally
+# with bge-m3 + bge-reranker-v2-m3; see README "Results".
+eval:
+  stage: eval
+  services:
+    - name: qdrant/qdrant:latest
+      alias: qdrant
+    - name: neo4j:5
+      alias: neo4j
+      variables:
+        NEO4J_AUTH: neo4j/change-me
+  variables:
+    QDRANT_URL: http://qdrant:6333
+    NEO4J_URI: bolt://neo4j:7687
+    NEO4J_USER: neo4j
+    NEO4J_PASSWORD: change-me
+    EMBED_BACKEND: hashing
+    RERANK_BACKEND: hashing
+  script:
+    - uv sync
+    - uv run python -m ingestion --granularity all --no-graph --embed-backend hashing
+    - uv run python -m eval --config all --out-dir eval/results
+    - uv run python -m eval --table
+  artifacts:
+    when: always
+    paths:
+      - eval/results/
+    expire_in: 4 weeks

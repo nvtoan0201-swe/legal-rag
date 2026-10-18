@@ -13,3 +13,11 @@ data/*
 qdrant_storage/
 neo4j_data/
 eval/results/
+
+# local planning notes
+plans/
+
+# external datasets and generated eval artefacts
+eval/zalo_raw/
+eval/generated_questions.jsonl
+data/uploads/

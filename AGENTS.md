@@ -31,3 +31,17 @@ make eval      # run evaluation
 make test      # pytest
 make lint      # ruff
 ```
+
+## Agent skills
+
+### Issue tracker
+
+Issues và specs nằm ở GitHub Issues của `nvtoan0201-swe/legal-rag` (dùng `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Dùng 5 nhãn mặc định: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` và `docs/adr/` ở gốc repo. See `docs/agents/domain.md`.

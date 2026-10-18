@@ -1,0 +1,14 @@
+# Keep the Docker build context small.
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data
+eval/results
+eval/zalo_raw
+eval/generated_questions.jsonl
+plans
+*.md
+!README.md
