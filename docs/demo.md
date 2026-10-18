@@ -1,7 +1,8 @@
 # Demo script
 
-A scripted walkthrough of the four demo moments from
-`plans/week-6-polish.md`. Recording the video itself needs a human at a browser;
+A scripted walkthrough of the demo moments: a cited answer, streaming (SSE),
+the "not found" fallback, a cross-document question, document upload, and the
+graph/MCP tools. Recording the video itself needs a human at a browser;
 everything below runs against `make serve` with Qdrant, Neo4j and the local
 Qwen3-8B configured in `.env`.
 

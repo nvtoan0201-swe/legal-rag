@@ -55,8 +55,9 @@ make eval               # ablation table over the test set
 make serve              # FastAPI on :8000
 ```
 
-Ask a question (the LLM is configured in `.env`: the hosted OpenCode Go gateway
-with `mimo-v2.6-flash`, or `LLM_PROVIDER=local` for the self-hosted Qwen3-8B):
+Ask a question (the LLM is configured in `.env`: the hosted OpenCode Go
+gateway, tested with `mimo-v2.5`, or `LLM_PROVIDER=local` for the self-hosted
+Qwen3-8B; `.env.example` documents every setting):
 
 ```bash
 curl -s localhost:8000/query -H 'Content-Type: application/json' \
@@ -137,14 +138,14 @@ public Vietnamese legal QA datasets (mapped to our article ids,
 with two gold articles each. The Zalo AI 2021 legal retrieval corpus is mirrored
 in `eval/zalo_raw/` for reference, but none of its gold passages belong to these
 four documents (it was collected before 2024), so it is not part of the test set
-— a documented deviation from `plans/week-2-eval-baseline.md`.
+— a documented deviation from the original evaluation plan.
 
 ### Agent evaluation
 
 End-to-end run of the LangGraph agent on a 6-question sample with the local
 Qwen3-8B (`uv run python -m eval.agent_eval --limit 6`; embedding and reranking
-on CPU because the 6 GB card is shared with the model). Full rows in
-`eval/results/agent.json`:
+on CPU because the 6 GB card is shared with the model). Rows are written to
+`eval/results/agent.json` (gitignored):
 
 | Metric | Value |
 |---|---|
@@ -165,12 +166,17 @@ p50, or ~1.8 s p50 with the reranker.
 | Model | Serving | Faithfulness | Token F1 | Answer p50 | Cost |
 |---|---|---|---|---|---|
 | Qwen3-8B Q4_K_M | Ollama, RTX 4050 6 GB (53/47 GPU/CPU) | 0.833 | 0.539 | 85 s | 0 (local hardware) |
-| MiMo-V2.6-Flash | OpenCode Go gateway (`LLM_PROVIDER=api`) | not run — no API key in this environment | — | — | per token |
+| `mimo-v2.5` | OpenCode Go gateway (`LLM_PROVIDER=api`) | — | — | 14–55 s (smoke) | per token |
 
-The hosted path is wired the same way (see `.env.example`,
-`app/settings.py`, and `llm/openai_backend.py`, which sends
-`LLM_API_HEADERS` such as `x-opencode-session`) but the gateway key expired
-before this run, so only the local row carries measurements.
+The hosted OpenCode Go path was verified end to end on 2026-10-19 with
+`mimo-v2.5`: cited answers, the "not found" fallback, and the cross-document
+compare route all behaved as specified (14–55 s per query, single-query smoke
+timings). MiMo is a hybrid-thinking model whose reasoning tokens count against
+the completion budget — measured: a 700-token answer budget was entirely
+consumed by reasoning, returning an empty answer — so the client disables
+thinking via `LLM_EXTRA_BODY` (`{"chat_template_kwargs": {"enable_thinking":
+false}}`; see `.env.example` and `docs/decisions.md`). A full agent-eval run on
+the hosted model is pending.
 
 ## Evaluation
 
@@ -205,3 +211,9 @@ data/raw/     source documents (not committed; see data/raw/SOURCES.md)
   extraction is regex-based and conservative (bare "Điều N" resolves to the same
   document); the self-hosted model runs 4-bit on a 6 GB GPU, so answer latency is
   seconds rather than milliseconds.
+* Known issue: SSE `token` chunks are trimmed individually, so streamed text can
+  lose inter-token spaces on tokenizers that attach the leading space to the
+  following token (cosmetic; the non-streaming JSON response is unaffected).
+* The Docker path (Dockerfile + compose) is configured and
+  `docker compose config` validates, but the image build was not verified on the
+  development host (constrained root disk).
