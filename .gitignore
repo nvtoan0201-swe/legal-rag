@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# data and volumes
+data/*
+!data/.gitkeep
+qdrant_storage/
+neo4j_data/
+eval/results/

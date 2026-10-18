@@ -1,0 +1,41 @@
+[project]
+name = "legal-rag"
+version = "0.1.0"
+description = "GraphRAG + Multi-Agent QA over Vietnamese legal documents"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sse-starlette",
+    "pydantic-settings",
+    "python-multipart",
+    "docling",
+    "pymupdf",
+    "FlagEmbedding",
+    "qdrant-client",
+    "neo4j",
+    "langgraph",
+    "mcp",
+    "openai",
+    "langfuse",
+    "httpx",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "pre-commit",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
