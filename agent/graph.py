@@ -26,7 +26,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from llm.base import system, user
+from llm.base import strip_thinking, system, user
 from retrieval import tools as tool_impl
 from retrieval.search import Hit
 
@@ -348,7 +348,7 @@ class AgentRunner:
                 yield {"event": "token", "data": {"text": token}}
         except Exception as exc:  # pragma: no cover - depends on the LLM
             log.error("streaming LLM failed: %s", exc)
-        answer = "".join(parts).strip() or NOT_FOUND_ANSWER
+        answer = strip_thinking("".join(parts)) or NOT_FOUND_ANSWER
         yield {
             "event": "done",
             "data": {

@@ -211,9 +211,6 @@ data/raw/     source documents (not committed; see data/raw/SOURCES.md)
   extraction is regex-based and conservative (bare "Điều N" resolves to the same
   document); the self-hosted model runs 4-bit on a 6 GB GPU, so answer latency is
   seconds rather than milliseconds.
-* Known issue: SSE `token` chunks are trimmed individually, so streamed text can
-  lose inter-token spaces on tokenizers that attach the leading space to the
-  following token (cosmetic; the non-streaming JSON response is unaffected).
 * The Docker path (Dockerfile + compose) is configured and
   `docker compose config` validates, but the image build was not verified on the
   development host (constrained root disk).

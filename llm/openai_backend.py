@@ -111,7 +111,9 @@ class OpenAICompatibleClient:
             delta = chunk.choices[0].delta
             piece = getattr(delta, "content", None)
             if piece:
-                yield strip_thinking(piece)
+                # Raw deltas: the whitespace belongs to the tokens; the agent
+                # strips the accumulated answer once it is complete.
+                yield piece
 
     # -- async -----------------------------------------------------------
     async def achat(
@@ -143,7 +145,9 @@ class OpenAICompatibleClient:
             delta = chunk.choices[0].delta
             piece = getattr(delta, "content", None)
             if piece:
-                yield strip_thinking(piece)
+                # Raw deltas: the whitespace belongs to the tokens; the agent
+                # strips the accumulated answer once it is complete.
+                yield piece
 
     def available(self) -> bool:
         if self.models_url:
