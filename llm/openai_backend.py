@@ -26,6 +26,7 @@ class OpenAICompatibleClient:
         disable_thinking: bool = False,
         default_headers: dict[str, str] | None = None,
         models_url: str | None = None,
+        extra_body: dict | None = None,
     ) -> None:
         self.base_url = base_url
         self.model = model
@@ -35,6 +36,7 @@ class OpenAICompatibleClient:
         self.disable_thinking = disable_thinking
         self.default_headers = default_headers or {}
         self.models_url = models_url
+        self.extra_body = extra_body
         self._sync = None
         self._async = None
 
@@ -88,6 +90,7 @@ class OpenAICompatibleClient:
             messages=self._prepare(messages),
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self.extra_body,
         )
         return strip_thinking(response.choices[0].message.content or "")
 
@@ -99,6 +102,7 @@ class OpenAICompatibleClient:
             messages=self._prepare(messages),
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self.extra_body,
             stream=True,
         )
         for chunk in stream:
@@ -118,6 +122,7 @@ class OpenAICompatibleClient:
             messages=self._prepare(messages),
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self.extra_body,
         )
         return strip_thinking(response.choices[0].message.content or "")
 
@@ -129,6 +134,7 @@ class OpenAICompatibleClient:
             messages=self._prepare(messages),
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self.extra_body,
             stream=True,
         )
         async for chunk in stream:

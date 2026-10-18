@@ -18,6 +18,7 @@ def get_llm(settings: Settings | None = None, provider: str | None = None) -> LL
             disable_thinking=False,
             default_headers=settings.llm_api_headers or None,
             models_url=settings.llm_models_url or None,
+            extra_body=settings.llm_extra_body or None,
         )
     model = settings.local_llm_model
     return OpenAICompatibleClient(

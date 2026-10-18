@@ -61,8 +61,14 @@ was downloaded from Hugging Face over IPv4 and imported with
 with `mimo-v2.6-flash`, replacing the local Qwen3-8B as the default the app
 runs with. The gateway asks clients to identify themselves, so the OpenAI
 client sends a stable session id and user agent through `LLM_API_HEADERS`
-(`x-opencode-session`, `User-Agent`). Requires a Go API key from the OpenCode
-Console; the Qwen3-8B Ollama path remains one `LLM_PROVIDER=local` away.
+(`x-opencode-session`, `User-Agent`), and its model list lives at a
+non-standard path (`LLM_MODELS_URL`). MiMo is a hybrid-thinking model whose
+reasoning tokens count against the completion budget — measured: a 700-token
+answer budget was entirely consumed by reasoning, returning an empty answer —
+so requests disable thinking via `LLM_EXTRA_BODY`
+(`chat_template_kwargs.enable_thinking=false`). Requires a Go API key from
+the OpenCode Console; the Qwen3-8B Ollama path remains one
+`LLM_PROVIDER=local` away.
 
 **Test set from public QA datasets, not the Zalo corpus.** The plan assumed "Zalo
 AI Legal Text Retrieval 2023". That track does not exist (the legal retrieval

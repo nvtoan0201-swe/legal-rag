@@ -157,8 +157,10 @@ class AgentRunner:
             return {"route": "graph_query"}
         if self.use_llm_router:
             try:
+                # Budget must also cover the model's reasoning tokens, if any
+                # (a 12-token cap starves hybrid-thinking models like MiMo).
                 response = self.llm.chat(
-                    [system(ROUTER_SYSTEM), user(question)], temperature=0.0, max_tokens=12
+                    [system(ROUTER_SYSTEM), user(question)], temperature=0.0, max_tokens=128
                 )
                 label = response.strip().lower()
                 for candidate in ("compare_documents", "graph_query", "vector_search"):

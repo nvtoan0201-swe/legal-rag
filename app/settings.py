@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     llm_api_headers: dict[str, str] = {}
     # Optional override for the /models endpoint used by the health check.
     llm_models_url: str = ""
+    # Extra request body fields for the hosted API, as JSON in the env (.env),
+    # e.g. {"chat_template_kwargs": {"enable_thinking": false}} to turn off
+    # reasoning so it does not eat the answer's max_tokens budget.
+    llm_extra_body: dict = {}
     local_llm_base_url: str = "http://localhost:8000/v1"
     local_llm_model: str = "Qwen/Qwen3-8B"
     llm_temperature: float = 0.0
