@@ -1,9 +1,9 @@
 # legal-rag
 
-Question answering and analysis over Vietnamese legal documents, built as
-**GraphRAG + a LangGraph router agent**. Every answer cites specific articles;
-when there is no supporting evidence the system answers "not found" instead of
-making things up.
+Question answering over Vietnamese legal documents with **cited answers** and an
+explicit "not found" when the corpus has no evidence. Runs on a personal machine:
+Qdrant is embedded (no Docker), and the LLM is any OpenAI-compatible server or the
+Anthropic API, chosen by configuration.
 
 **Corpus** (four documents, 624 articles, 2,740 structure chunks):
 
@@ -17,79 +17,80 @@ making things up.
 ## Architecture
 
 ```
-Client ──HTTP/SSE──> FastAPI (app/)
-                        │
-                     LangGraph agent (agent/graph.py)
-                        │  router: rules + LLM
-        ┌───────────────┼────────────────┐
-   vector_search     graph_query     compare_documents
-        └───────────────┴────────────────┘
-                  MCP server (retrieval/mcp_server.py)
-              ┌─────────┴─────────┐
-           Qdrant               Neo4j
-       (dense+sparse,       (Document, Article,
-        bge-m3, rerank)      REFERENCES, DETAILS)
-                        │
-              LLM (llm/): hosted API | Qwen3-8B (vLLM/Ollama)
-                        │
-                  Langfuse (observability.py, optional)
+question ──> rag.answer ──> retrieval (Retriever) ──> Qdrant (embedded)
+                │              dense + sparse, RRF, optional rerank
+                │                  ▲
+                │            ingestion: parse → chunk → embed → upsert
+                ▼
+           llm/ (LLMClient)  ── openai | anthropic   (LLM_PROVIDER)
+                │
+           cited answer, or "not found"
 ```
 
-**Ingestion:** text/PDF/DOCX → Docling (fallback PyMuPDF) → regex split by
-Chapter/Article/Clause → metadata per `docs/design.md` → bge-m3 dense + sparse →
-Qdrant; documents, articles and cross-references → Neo4j.
-
-**Query:** question → router → tool(s) → hybrid search → rerank
-(bge-reranker-v2-m3) → optional graph expansion → answer with citations → SSE
-stream. No evidence → "not found".
+* **Ingestion** (`ingestion/`): text/PDF → regex split by Chương/Điều/Khoản with
+  metadata per `docs/design.md` → bge-m3 dense + sparse vectors → Qdrant.
+* **Retrieval** (`retrieval/`): hybrid search (dense + sparse, RRF fusion), then
+  bge-reranker-v2-m3 when enabled. A score below the threshold returns no hits.
+* **Answer** (`rag/answer.py`): numbers the retrieved chunks `[1]`, `[2]`, asks the
+  LLM to cite them, and returns "not found" when there is no evidence or no
+  citation points at a real chunk. The LLM is trusted for wording only.
+* **LLM** (`llm/`): one `LLMClient` seam. `LLM_PROVIDER=openai` covers any
+  OpenAI-compatible server (OpenAI, OpenCode Go, Ollama, vLLM, LM Studio);
+  `LLM_PROVIDER=anthropic` uses the Messages API. Switching is configuration only.
 
 ## Quickstart
 
 ```bash
-cp .env.example .env
+cp .env.example .env    # set LLM_PROVIDER, LLM_API_BASE, LLM_MODEL, LLM_API_KEY
 uv sync                 # Python 3.11 environment
-make up                 # Qdrant + Neo4j (docker compose)
-make ingest             # parse -> chunk -> embed -> load (~2 GB model download)
-make test               # hermetic test suite (no services needed)
-make eval               # ablation table over the test set
+make ingest             # parse -> chunk -> embed -> Qdrant (data/qdrant), ~10 min on GPU
+make test               # hermetic test suite (no services, no network)
+make eval               # retrieval ablation over the test set
 make serve              # FastAPI on :8000
 ```
 
-Ask a question (the LLM is configured in `.env`: the hosted OpenCode Go
-gateway, tested with `mimo-v2.5`, or `LLM_PROVIDER=local` for the self-hosted
-Qwen3-8B; `.env.example` documents every setting):
+`QDRANT_URL` empty (the default) keeps Qdrant embedded at `QDRANT_PATH`. Embedded
+Qdrant locks its folder to one process, so the API and an eval run cannot share it at
+the same time. Set `QDRANT_URL=http://localhost:6333` to use a Qdrant server instead
+(`docker compose up -d qdrant`).
+
+If the LLM call hangs for minutes on a machine with a blackholed IPv6 route, set
+`LLM_IPV4_ONLY=true` (see `llm/net.py`).
+
+Ask a question:
 
 ```bash
 curl -s localhost:8000/query -H 'Content-Type: application/json' \
   -d '{"question": "Người lao động đơn phương chấm dứt hợp đồng không xác định thời hạn phải báo trước bao nhiêu ngày?"}' | jq
 ```
 
-Streaming (SSE events: `meta`, `sources`, `token`, `done`):
+Retrieval only, without calling the LLM:
 
 ```bash
-curl -N localhost:8000/query -H 'Content-Type: application/json' \
-  -d '{"question": "So sánh Nghị định 168/2024 và Luật Trật tự, an toàn giao thông đường bộ 2024 về mức phạt?", "stream": true}'
+curl -s localhost:8000/query -H 'Content-Type: application/json' \
+  -d '{"question": "Phải báo trước bao nhiêu ngày?", "answer": false}' | jq
 ```
 
-Everything in Docker:
-
-```bash
-docker compose up -d                   # qdrant + neo4j + one-shot ingest + app
-docker compose --profile llm up -d     # optional Ollama for the self-hosted model
-docker compose --profile tracing up -d # optional Langfuse at :3000
-```
+Docker (optional): `docker compose up -d` runs Qdrant, one-shot ingestion and the app.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/query` | Answer with citations; `use_agent=false` returns chunks only, `stream=true` streams SSE |
-| GET | `/health` | Qdrant points, LLM reachability, configured backends |
+| POST | `/query` | `answer: true` (default) returns a cited answer; `answer: false` returns chunks only |
+| GET | `/health` | Qdrant reachability and point count, LLM configuration and reachability |
 | POST | `/documents` | Upload a document; processing runs in the background |
 | GET | `/documents` | Corpus + uploaded documents with status |
 | GET | `/documents/{id}/status` | Processing status of one document |
 
+Response fields of `/query`: `found`, `answer`, `cited` (chunk ids the answer
+cites), `results` (retrieved chunks with citations), `elapsed_ms`.
+
 ## Results
+
+Numbers below were measured with Qdrant on a server (phase 0). Phase 1 runs the same
+chunks and vectors embedded in Qdrant; see "Local run" for the comparison.
+
 
 Ablation over the evaluation test set (187 questions filtered from public
 Vietnamese legal QA datasets plus LLM-generated grounded questions, graded
@@ -129,6 +130,23 @@ Reading the table:
 * Decree 168 stays the hardest document: its fine tables are flattened to text
   and its questions are numeric ("how much is the fine?").
 
+### Local run (phase 1, embedded Qdrant)
+
+Same 187 questions, same chunks and vectors, Qdrant embedded at `data/qdrant`
+(`QDRANT_URL` empty). Run with `uv run python -m eval --config all --out-dir eval/results/local`:
+
+| Config | Search | Recall@5 local | Recall@5 server (phase 0) | MRR local | MRR server | p50 ms local |
+|---|---|---|---|---|---|---|
+| `baseline_fixed512_dense` | fixed 512 tokens, dense | 0.588 | 0.588 | 0.375 | 0.375 | 25 |
+| `structure_dense` | structure, dense | 0.872 | 0.872 | 0.776 | 0.776 | 31 |
+| `structure_hybrid` | structure, dense+sparse RRF | 0.872 | 0.866 | 0.785 | 0.785 | 105 |
+| `structure_hybrid_rerank` | structure, hybrid + rerank | 0.898 | 0.893 | 0.813 | 0.811 | 2268 |
+| `article_hybrid_rerank` | article-level, hybrid + rerank | 0.840 | 0.840 | 0.741 | 0.741 | 3153 |
+
+Four of five configs reproduce the server numbers exactly. The two hybrid configs
+differ by one question out of 187 on Recall@5. Rerank latency is higher locally because
+the GPU is shared between the embedder and the reranker.
+
 ### Test set
 
 `eval/testset.jsonl` (see `eval/README.md`): 187 questions — 123 filtered from
@@ -139,44 +157,6 @@ with two gold articles each. The Zalo AI 2021 legal retrieval corpus is mirrored
 in `eval/zalo_raw/` for reference, but none of its gold passages belong to these
 four documents (it was collected before 2024), so it is not part of the test set
 — a documented deviation from the original evaluation plan.
-
-### Agent evaluation
-
-End-to-end run of the LangGraph agent on a 6-question sample with the local
-Qwen3-8B (`uv run python -m eval.agent_eval --limit 6`; embedding and reranking
-on CPU because the 6 GB card is shared with the model). Rows are written to
-`eval/results/agent.json` (gitignored):
-
-| Metric | Value |
-|---|---|
-| Recall@5 (retrieved context) | 0.833 |
-| Faithfulness (citation check + LLM judge) | 0.833 |
-| Token F1 vs. reference answer | 0.539 |
-| Answer latency p50 / p95 | 85 s / 225 s |
-| Recall@5 after graph expansion | 1.000 (+0.167) |
-
-The last row is the "+graph" ablation entry: expanding the top-5 hits with Neo4j
-neighbours recovers every gold article that plain retrieval missed in this
-sample, at the cost of extra context. Latency is dominated by the 4-bit model
-splitting between GPU and CPU, not by the pipeline: retrieval alone is ~18-20 ms
-p50, or ~1.8 s p50 with the reranker.
-
-### Model comparison
-
-| Model | Serving | Faithfulness | Token F1 | Answer p50 | Cost |
-|---|---|---|---|---|---|
-| Qwen3-8B Q4_K_M | Ollama, RTX 4050 6 GB (53/47 GPU/CPU) | 0.833 | 0.539 | 85 s | 0 (local hardware) |
-| `mimo-v2.5` | OpenCode Go gateway (`LLM_PROVIDER=api`) | — | — | 14–55 s (smoke) | per token |
-
-The hosted OpenCode Go path was verified end to end on 2026-10-19 with
-`mimo-v2.5`: cited answers, the "not found" fallback, and the cross-document
-compare route all behaved as specified (14–55 s per query, single-query smoke
-timings). MiMo is a hybrid-thinking model whose reasoning tokens count against
-the completion budget — measured: a 700-token answer budget was entirely
-consumed by reasoning, returning an empty answer — so the client disables
-thinking via `LLM_EXTRA_BODY` (`{"chat_template_kwargs": {"enable_thinking":
-false}}`; see `.env.example` and `docs/decisions.md`). A full agent-eval run on
-the hosted model is pending.
 
 ## Evaluation
 
@@ -192,12 +172,12 @@ faithfulness (citation check + judge verdict), latency p50/p95.
 ## Project layout
 
 ```
-app/          FastAPI app, SSE streaming, document endpoints
-agent/        LangGraph router agent
-ingestion/    registry, parse (Docling/PyMuPDF), chunk, embed, load, graph
-retrieval/    search (dense/sparse/hybrid/rerank), tools, MCP server, graph queries
-llm/          OpenAI-compatible client (hosted API or Qwen3-8B)
-eval/         test set builder, metrics, runner, LLM judge
+app/          FastAPI app, query and document endpoints
+rag/          answer generation with citations and "not found"
+retrieval/    Retriever (dense, sparse, hybrid, rerank) and hit model
+ingestion/    registry, parse (text/PDF), chunk, embed, load Qdrant
+llm/          LLMClient seam: openai-compatible and anthropic adapters
+eval/         test set builder, metrics, retrieval runner, LLM judge
 docs/         design and decisions
 data/raw/     source documents (not committed; see data/raw/SOURCES.md)
 ```
@@ -205,12 +185,10 @@ data/raw/     source documents (not committed; see data/raw/SOURCES.md)
 ## Decisions and limitations
 
 * `docs/decisions.md` — structure-aware chunking, bge-m3, Qdrant hybrid search,
-  reranking, Neo4j references, LangGraph + MCP, local vs. hosted model.
+  reranking, hosted model.
 * `docs/design.md` — schemas and API surface.
-* Limitations: the land-law appendix is not part of the source text; reference
-  extraction is regex-based and conservative (bare "Điều N" resolves to the same
-  document); the self-hosted model runs 4-bit on a 6 GB GPU, so answer latency is
-  seconds rather than milliseconds.
-* The Docker path (Dockerfile + compose) is configured and
-  `docker compose config` validates, but the image build was not verified on the
-  development host (constrained root disk).
+* Limitations: the land-law appendix is not part of the source text; the
+  "Điều N" reference resolution used by phase 0's graph is no longer part of the
+  query path; Qdrant embedded mode is single-process.
+* The Docker path (Dockerfile + compose) is configured but the image build was not
+  verified on the development host (constrained root disk).

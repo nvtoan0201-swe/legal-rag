@@ -1,7 +1,7 @@
 """Common LLM interface.
 
-Both backends are OpenAI-compatible, so one client class covers the hosted API
-and the self-hosted Qwen3-8B (vLLM or Ollama 4-bit); see docs/decisions.md.
+The hosted API is OpenAI-compatible, so one client class covers it; see
+docs/decisions.md.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def user(content: str) -> Message:
 
 
 def strip_thinking(text: str) -> str:
-    """Drop Qwen3 thinking blocks from model output."""
+    """Drop reasoning blocks (<think>...</think>) from model output."""
     cleaned = _THINK_BLOCK.sub("", text or "")
     if "</think>" in cleaned.lower():
         cleaned = _THINK_PREFIX.sub("", cleaned)

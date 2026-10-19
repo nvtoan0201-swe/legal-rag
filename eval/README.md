@@ -43,7 +43,7 @@ uv run python -m eval.build_testset --verify-only         # check gold ids exist
 ```
 
 Generated questions are checkpointed to `eval/generated_questions.jsonl` after
-each successful LLM call, so a slow or interrupted local model does not lose
+each successful LLM call, so a slow or interrupted model call does not lose
 work. Every row is validated against the ingested chunks: the question must end
 with "?", the answer must be non-empty, and every gold `article_id` must exist in
 the corpus (unknown ids are dropped and reported). The result is shuffled with a
@@ -62,8 +62,6 @@ fixed seed so reruns are reproducible.
 - **Token F1** — SQuAD-style token F1 between the generated answer and the
   reference answer, over answered rows only.
 - **Latency p50/p95** — end-to-end time per question.
-- **Graph expansion gain** — Recall@k with plain retrieval vs. retrieval plus
-  Neo4j neighbours (`eval/agent_eval.py`), the "+graph" row.
 
 ## Running
 
@@ -71,7 +69,6 @@ fixed seed so reruns are reproducible.
 make eval                                  # every config -> eval/results/*.json
 make eval-table                            # print the ablation table
 uv run python -m eval --config structure_hybrid_rerank --limit 20 --judge
-uv run python -m eval.agent_eval --limit 25  # end-to-end agent quality
 ```
 
 `eval/results/*.json` hold the summary, per-document breakdown, and every row

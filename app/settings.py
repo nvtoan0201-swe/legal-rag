@@ -10,12 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    qdrant_url: str = "http://localhost:6333"
+    # Empty qdrant_url = embedded local storage at qdrant_path (no server needed).
+    qdrant_url: str = ""
+    qdrant_path: str = "data/qdrant"
     qdrant_api_key: str = ""
-
-    neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "change-me"
 
     collection: str = "legal_docs"
     baseline_collection: str = "legal_docs_baseline"
@@ -28,7 +26,11 @@ class Settings(BaseSettings):
     dense_threshold: float = 0.45
     rerank_threshold: float = 0.20
 
-    llm_provider: str = "local"  # "local" (Qwen3-8B via vLLM/Ollama) or "api" (hosted)
+    # "openai" (any OpenAI-compatible server: OpenAI, OpenCode Go, Ollama, vLLM, LM Studio)
+    # or "anthropic" (Messages API). LLM_API_BASE must match the provider.
+    llm_provider: str = "openai"
+    # Bind LLM sockets to IPv4 to skip a blackholed IPv6 route (see llm/net.py).
+    llm_ipv4_only: bool = False
     llm_api_key: str = ""
     llm_api_base: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
@@ -41,14 +43,8 @@ class Settings(BaseSettings):
     # e.g. {"chat_template_kwargs": {"enable_thinking": false}} to turn off
     # reasoning so it does not eat the answer's max_tokens budget.
     llm_extra_body: dict = {}
-    local_llm_base_url: str = "http://localhost:8000/v1"
-    local_llm_model: str = "Qwen/Qwen3-8B"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 800
-
-    langfuse_host: str = ""
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
 
     data_dir: str = "data"
 

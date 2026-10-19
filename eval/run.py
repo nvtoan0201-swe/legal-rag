@@ -213,13 +213,14 @@ def load_results(out_dir: Path = RESULTS_DIR) -> list[dict]:
     return results
 
 
-def build_retriever(config: Config, settings=None, embedder=None, reranker=None):
+def build_retriever(config: Config, settings=None, embedder=None, reranker=None, client=None):
     from app.settings import get_settings
     from ingestion.load import get_client
     from retrieval.search import Retriever
 
     settings = settings or get_settings()
-    client = get_client(settings.qdrant_url, settings.qdrant_api_key)
+    if client is None:
+        client = get_client(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path)
     return Retriever(
         client=client,
         collection=config.collection,
@@ -280,10 +281,19 @@ def main(argv: list[str] | None = None) -> int:
 
         judge = build_judge()
 
+    # One Qdrant client for every config: embedded storage admits a single client per
+    # folder, and a second one while the first is alive raises "already accessed".
+    from app.settings import get_settings
+    from ingestion.load import get_client
+
+    settings = get_settings()
+    client = get_client(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path)
     results = []
     for name in names:
         config = CONFIGS.get(name, Config(name=name, collection=name, mode="hybrid_rerank"))
-        retriever = build_retriever(config, embedder=embedder, reranker=reranker)
+        retriever = build_retriever(
+            config, settings=settings, embedder=embedder, reranker=reranker, client=client
+        )
         results.append(
             run_config(
                 name, testset, retriever, judge=judge, limit=args.limit, out_dir=args.out_dir

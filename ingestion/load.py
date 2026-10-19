@@ -14,7 +14,7 @@ from ingestion.embed import Vectorized
 
 log = logging.getLogger(__name__)
 
-DEFAULT_URL = "http://localhost:6333"
+DEFAULT_PATH = "data/qdrant"
 DEFAULT_COLLECTION = "legal_docs"
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
@@ -31,13 +31,17 @@ def collection_for(granularity: str) -> str:
     return COLLECTION_BY_GRANULARITY.get(granularity, DEFAULT_COLLECTION)
 
 
-def get_client(url: str | None = None, api_key: str | None = None) -> QdrantClient:
-    url = url or os.environ.get("QDRANT_URL", DEFAULT_URL)
-    return QdrantClient(
-        url=url,
-        api_key=api_key or os.environ.get("QDRANT_API_KEY") or None,
-        timeout=120,
-    )
+def get_client(
+    url: str | None = None, api_key: str | None = None, path: str | None = None
+) -> QdrantClient:
+    """Qdrant server when `url` is set, otherwise embedded storage at `path`."""
+    if url:
+        return QdrantClient(
+            url=url,
+            api_key=api_key or os.environ.get("QDRANT_API_KEY") or None,
+            timeout=120,
+        )
+    return QdrantClient(path=path or DEFAULT_PATH)
 
 
 def ensure_collection(

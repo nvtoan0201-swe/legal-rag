@@ -38,28 +38,19 @@ reference is assumed to stay inside the same document. Cost: some genuine
 cross-document references are missed; benefit: almost no false edges. Edge counts
 are logged on every ingest for spot checks.
 
+*Phase 1:* removed from the query path; the graph returns in a later phase, measured against the phase-1 baseline.
+
 **LangGraph router with rules first.** The router checks two unambiguous shapes
 (comparison between two named documents; explicit reference/citation questions)
 before asking the LLM to classify, which keeps the common path free of an extra
 LLM round trip. Tools are exposed through MCP so retrieval stays decoupled from
 the agent.
 
-**Local Qwen3-8B in 4-bit via Ollama.** No GPU with enough memory for
-unquantised weights, so the self-hosted model is Qwen3-8B Q4_K_M (~5 GB) served
-by Ollama through its OpenAI-compatible endpoint. On a 6 GB card Ollama splits
-the model between GPU and CPU, so answer latency is seconds. The hosted-API
-backend uses the same client class; it activates when `LLM_PROVIDER=api` plus an
-API key are configured.
+*Phase 1:* replaced by a plain answer function (`rag/answer.py`); MCP removed.
 
-*Operational note:* the Ollama registry was unreachable from this host because
-its IPv6 route is blackholed (`ollama pull` failed on R2 timeouts), so the GGUF
-was downloaded from Hugging Face over IPv4 and imported with
-`ollama create qwen3-8b-gguf -f Modelfile`. Same weights, no registry dependency.
-
-**Default LLM moved to MiMo-V2.6-Flash via OpenCode Go.** The hosted backend
-(`LLM_PROVIDER=api`) now points at the OpenCode Go OpenAI-compatible gateway
-with `mimo-v2.6-flash`, replacing the local Qwen3-8B as the default the app
-runs with. The gateway asks clients to identify themselves, so the OpenAI
+**Hosted LLM via OpenCode Go, MiMo-V2.6-Flash.** The app uses one
+OpenAI-compatible client class pointed at the OpenCode Go gateway with
+`mimo-v2.6-flash`. The gateway asks clients to identify themselves, so the OpenAI
 client sends a stable session id and user agent through `LLM_API_HEADERS`
 (`x-opencode-session`, `User-Agent`), and its model list lives at a
 non-standard path (`LLM_MODELS_URL`). MiMo is a hybrid-thinking model whose
@@ -67,8 +58,7 @@ reasoning tokens count against the completion budget — measured: a 700-token
 answer budget was entirely consumed by reasoning, returning an empty answer —
 so requests disable thinking via `LLM_EXTRA_BODY`
 (`chat_template_kwargs.enable_thinking=false`). Requires a Go API key from
-the OpenCode Console; the Qwen3-8B Ollama path remains one
-`LLM_PROVIDER=local` away.
+the OpenCode Console.
 
 **Test set from public QA datasets, not the Zalo corpus.** The plan assumed "Zalo
 AI Legal Text Retrieval 2023". That track does not exist (the legal retrieval
@@ -90,9 +80,13 @@ Meaningful numbers require bge-m3 + bge-reranker-v2-m3 and are produced locally
 processing runs in a background task with a JSON status store. SSE events:
 `meta`, `sources`, `token`, `done`.
 
+*Phase 1:* SSE removed; `/query` returns one JSON response.
+
 **Optional Langfuse tracing.** `observability.py` wraps agent runs in a Langfuse
 trace when keys are present and is a no-op otherwise, so the dependency never
 blocks local development.
+
+*Phase 1:* removed with the agent; logs are plain text for now.
 
 **uv + ruff + pytest.** Fast, single-tool workflow for deps, lint, and tests; the
 test suite is hermetic (hashing embedder, stub services) and runs in ~6 s.
@@ -102,8 +96,24 @@ test suite is hermetic (hashing embedder, stub services) and runs in ~6 s.
 fixed-512 (0.588 R@5, 0.375 MRR), structure dense (0.872, 0.776), +sparse/hybrid
 (0.866, 0.785), +rerank (0.893, 0.811), article granularity (0.840, 0.741).
 
-**GPU memory budget.** On a 6 GB card the 8B model (~5 GB in 4-bit) and the
-reranker cannot both be fully resident: Ollama splits the model 53/47 between GPU
-and CPU. Loading everything at once makes the reranker hit CUDA OOM, which is why
-`eval.agent_eval` sets `EMBED_DEVICE=cpu` and runs with a small `--limit`;
-the retrieval ablation stops the LLM first.
+**GPU memory budget.** On a 6 GB card, bge-m3 and the reranker must fit together
+without an LLM resident. Loading everything at once can make the reranker hit CUDA
+OOM, so `eval.agent_eval` may need `EMBED_DEVICE=cpu` and a small `--limit`; the
+retrieval ablation does not load the LLM.
+
+**Phase 1: local-first RAG core.** Runs on one machine: Qdrant embedded at
+`QDRANT_PATH` (no Docker), no Neo4j, no LangGraph, no MCP. Rationale: the goal is to
+learn and measure RAG, and each extra service is one more thing to operate before
+the numbers mean anything. Measured on the same 187 questions, embedded Qdrant
+gives Recall@5 0.872 and MRR 0.785 for hybrid search, against 0.866 and 0.785 on
+the server (phase 0); the one-question gap is noise on this test set.
+
+**LLM as a seam, two adapters.** `LLMClient` is the only interface the answer path
+depends on. `LLM_PROVIDER=openai` covers every OpenAI-compatible server, and
+`LLM_PROVIDER=anthropic` covers the Messages API. A second real adapter, not a
+hypothetical one, is what justifies the seam. The Anthropic adapter uses httpx, so
+it adds no SDK dependency.
+
+**Grounding checked in code, not by the model.** An answer is "not found" when no
+hit clears the threshold, when the model says `NOT_FOUND`, or when no citation
+points at a context that was actually given. The model is trusted for wording only.

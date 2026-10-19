@@ -11,7 +11,6 @@ __pycache__/
 data/*
 !data/.gitkeep
 qdrant_storage/
-neo4j_data/
 eval/results/
 
 # local planning notes

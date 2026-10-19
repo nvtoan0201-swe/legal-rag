@@ -39,16 +39,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None, help="max chunks per document (debug)")
     parser.add_argument("--embed-backend", default=None, help="bge-m3 (default) or hashing")
     parser.add_argument(
-        "--graph", dest="graph", action="store_true", default=True, help="load Neo4j (default)"
-    )
-    parser.add_argument("--no-graph", dest="graph", action="store_false", help="skip Neo4j")
-    parser.add_argument(
         "--skip-if-loaded",
         action="store_true",
         help="exit early when the target collections already hold points (docker compose)",
     )
     parser.add_argument("--log-level", default="INFO")
     return parser
+
+
+def _qdrant_client():
+    from app.settings import get_settings
+
+    settings = get_settings()
+    return load_mod.get_client(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path)
 
 
 def _write_jsonl(path: Path, chunks) -> None:
@@ -94,7 +97,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.skip_if_loaded and not args.recreate:
         try:
-            client = load_mod.get_client()
+            client = _qdrant_client()
             loaded = [
                 collection
                 for granularity in granularities
@@ -186,7 +189,7 @@ def run(args: argparse.Namespace) -> int:
     from ingestion.embed import get_embedder
 
     embedder = get_embedder(args.embed_backend)
-    client = load_mod.get_client()
+    client = _qdrant_client()
     total = 0
     for granularity in granularities:
         collection = args.collection or load_mod.collection_for(granularity)
@@ -212,43 +215,8 @@ def run(args: argparse.Namespace) -> int:
             load_mod.count_points(client, collection),
         )
 
-    if args.graph:
-        graph_result = _load_graph(specs, texts, chunked, args)
-        if graph_result is not None:
-            manifest["graph"] = graph_result
-            manifest_path.write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
-
     log.info("ingestion finished: %d points in %.1fs", total, time.time() - started)
     return 0
-
-
-def _load_graph(specs, texts, chunked, args) -> dict | None:
-    """Load Document/Article nodes and reference edges into Neo4j."""
-    from ingestion import graph as graph_mod
-
-    chunks_by_doc: dict[str, list] = {}
-    for spec, path in specs:
-        chunks = chunked.get(f"{spec.doc_id}::structure")
-        if chunks is None:
-            text = texts.get(spec.doc_id, "")
-            chunks = chunk_mod.chunk_document(text, spec, str(path)) if text else []
-        chunks_by_doc[spec.doc_id] = chunks
-
-    driver = None
-    try:
-        driver = graph_mod.get_driver()
-        graph_mod.ensure_constraints(driver)
-        return graph_mod.load_graph(
-            driver, [spec for spec, _path in specs], chunks_by_doc, recreate=args.recreate
-        )
-    except Exception as exc:
-        log.warning("Neo4j graph load skipped: %s", exc)
-        return None
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def main(argv: list[str] | None = None) -> int:

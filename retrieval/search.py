@@ -171,7 +171,7 @@ def get_reranker(backend: str | None = None, **kwargs):
 
 
 class Retriever:
-    """Search facade used by the API, the MCP server, and the eval harness."""
+    """Search facade used by the API and the eval harness."""
 
     def __init__(
         self,

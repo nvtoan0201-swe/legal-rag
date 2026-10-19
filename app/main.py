@@ -1,4 +1,4 @@
-"""FastAPI application: health, agent query (JSON or SSE), document endpoints."""
+"""FastAPI application: health, cited RAG query, document endpoints."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
 
 from app.documents import UPLOAD_DIR, DocumentRecord, DocumentStore, process_document, slugify
 from app.settings import Settings, get_settings
+from rag.answer import answer_from_hits, retrieve
 from retrieval.search import Retriever, get_reranker
 
 log = logging.getLogger("app")
@@ -29,16 +29,15 @@ class QueryRequest(BaseModel):
     prefetch: int = Field(default=30, ge=5, le=200)
     threshold: float | None = Field(default=None, description="Ghi đè ngưỡng not-found")
     include_text: bool = True
-    use_agent: bool = Field(default=True, description="Dùng router agent để trả lời kèm trích dẫn")
-    stream: bool = Field(default=False, description="Trả lời qua SSE")
+    answer: bool = Field(default=True, description="Sinh câu trả lời có trích dẫn từ LLM")
 
 
 class QueryResponse(BaseModel):
     question: str
     found: bool
     mode: str
-    route: str | None = None
     answer: str | None = None
+    cited: list[str] = Field(default_factory=list, description="chunk_id được trích dẫn")
     results: list[dict] = Field(default_factory=list)
     elapsed_ms: float = 0.0
 
@@ -49,7 +48,6 @@ class HealthResponse(BaseModel):
     llm: dict
     embed_backend: str
     rerank_backend: str
-    llm_provider: str
 
 
 def build_retriever(settings: Settings) -> Retriever:
@@ -57,25 +55,12 @@ def build_retriever(settings: Settings) -> Retriever:
     from ingestion.load import get_client
 
     return Retriever(
-        client=get_client(settings.qdrant_url, settings.qdrant_api_key),
+        client=get_client(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path),
         collection=settings.collection,
         embedder=get_embedder(settings.embed_backend, model_name=settings.embed_model),
         reranker=get_reranker(settings.rerank_backend, model_name=settings.rerank_model),
         dense_threshold=settings.dense_threshold,
         rerank_threshold=settings.rerank_threshold,
-    )
-
-
-def build_agent(settings: Settings):
-    from agent.graph import AgentRunner
-    from llm.factory import get_llm
-    from retrieval.graph import GraphStore
-
-    return AgentRunner(
-        retriever=build_retriever(settings),
-        graph_store=GraphStore(),
-        llm=get_llm(settings),
-        top_k=5,
     )
 
 
@@ -86,11 +71,13 @@ def get_retriever(request: Request) -> Retriever:
     return app.state.retriever
 
 
-def get_agent(request: Request):
+def get_llm_client(request: Request):
     app = request.app
-    if getattr(app.state, "agent", None) is None:
-        app.state.agent = build_agent(app.state.settings)
-    return app.state.agent
+    if getattr(app.state, "llm", None) is None:
+        from llm.factory import get_llm
+
+        app.state.llm = get_llm(app.state.settings)
+    return app.state.llm
 
 
 def get_documents(request: Request) -> DocumentStore:
@@ -101,7 +88,7 @@ def get_documents(request: Request) -> DocumentStore:
 async def lifespan(app: FastAPI):
     app.state.settings = get_settings()
     app.state.retriever = None
-    app.state.agent = None
+    app.state.llm = None
     app.state.documents = DocumentStore()
     log.info("legal-rag API starting")
     yield
@@ -118,7 +105,7 @@ def health(request: Request) -> HealthResponse:
     try:
         from ingestion.load import count_points, get_client
 
-        client = get_client(settings.qdrant_url, settings.qdrant_api_key)
+        client = get_client(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path)
         qdrant_info["reachable"] = True
         qdrant_info["collection"] = settings.collection
         qdrant_info["points"] = count_points(client, settings.collection)
@@ -142,40 +129,18 @@ def health(request: Request) -> HealthResponse:
         llm=llm_info,
         embed_backend=settings.embed_backend,
         rerank_backend=settings.rerank_backend,
-        llm_provider=settings.llm_provider,
     )
 
 
-async def _sse_events(runner, payload: QueryRequest):
-    async for event in runner.astream(payload.question):
-        yield {"event": event["event"], "data": json.dumps(event["data"], ensure_ascii=False)}
-
-
-@app.post("/query")
-async def query(payload: QueryRequest, request: Request):
+@app.post("/query", response_model=QueryResponse)
+async def query(payload: QueryRequest, request: Request) -> QueryResponse:
     started = time.perf_counter()
-    if payload.stream:
-        runner = get_agent(request)
-        return EventSourceResponse(_sse_events(runner, payload))
-
-    if payload.use_agent:
-        runner = get_agent(request)
-        result = await asyncio.to_thread(runner.run, payload.question)
-        return QueryResponse(
-            question=payload.question,
-            found=result.found,
-            mode="agent",
-            route=result.route,
-            answer=result.answer,
-            results=[hit.to_dict(include_text=payload.include_text) for hit in result.contexts],
-            elapsed_ms=round(result.elapsed_ms, 1),
-        )
-
     retriever = get_retriever(request)
     try:
         hits = await asyncio.to_thread(
-            retriever.search,
+            retrieve,
             payload.question,
+            retriever,
             payload.mode,
             payload.top_k,
             payload.prefetch,
@@ -183,14 +148,27 @@ async def query(payload: QueryRequest, request: Request):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    results = [hit.to_dict(include_text=payload.include_text) for hit in hits]
+    if not payload.answer:
+        return QueryResponse(
+            question=payload.question,
+            found=bool(hits),
+            mode=payload.mode,
+            results=results,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+
+    llm = get_llm_client(request)
+    result = await asyncio.to_thread(answer_from_hits, payload.question, hits, llm)
     return QueryResponse(
         question=payload.question,
-        found=bool(hits),
+        found=result.found,
         mode=payload.mode,
-        answer=None,
-        results=[hit.to_dict(include_text=payload.include_text) for hit in hits],
-        elapsed_ms=round(elapsed_ms, 1),
+        answer=result.text,
+        cited=[hit.chunk_id for hit in result.citations],
+        results=results,
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
     )
 
 

@@ -1,4 +1,4 @@
-.PHONY: up down ingest ingest-all eval eval-table testset test lint serve mcp
+.PHONY: up down ingest ingest-all eval eval-table testset test lint serve
 
 up:
 	docker compose up -d
@@ -6,7 +6,7 @@ up:
 down:
 	docker compose down
 
-# Parse -> chunk -> embed -> load Qdrant + Neo4j (bge-m3, ~2 GB model download).
+# Parse -> chunk -> embed -> load Qdrant (local file, or server if QDRANT_URL is set).
 ingest:
 	uv run python -m ingestion
 
@@ -33,6 +33,3 @@ lint:
 
 serve:
 	uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-mcp:
-	uv run python -m retrieval.mcp_server

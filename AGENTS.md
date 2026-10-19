@@ -2,11 +2,11 @@
 
 ## Structure
 
-- `app/` — FastAPI app, routes, SSE
-- `ingestion/` — parse, chunk, embed, load into Qdrant/Neo4j
-- `retrieval/` — hybrid search, rerank, graph queries, MCP server
-- `agent/` — LangGraph router and tools
-- `llm/` — LLM clients (hosted API, self-hosted Qwen3-8B)
+- `app/` — FastAPI app, query and document endpoints
+- `ingestion/` — parse, chunk, embed, load into Qdrant (embedded or server)
+- `retrieval/` — Retriever: dense, sparse, hybrid (RRF), rerank
+- `rag/` — answer generation with citations, or "not found"
+- `llm/` — LLMClient seam: OpenAI-compatible and Anthropic adapters
 - `eval/` — test set and evaluation scripts
 - `tests/` — pytest tests
 - `docs/` — design and decisions
@@ -24,7 +24,7 @@
 
 ```bash
 uv sync        # install deps
-make up        # start Qdrant + Neo4j
+make up        # optional: Qdrant server in Docker (default is embedded)
 make down      # stop services
 make ingest    # load documents
 make eval      # run evaluation

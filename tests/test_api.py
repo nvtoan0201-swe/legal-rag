@@ -1,13 +1,11 @@
-"""API tests with stub retriever/agent: no models, no Qdrant, no LLM required."""
+"""API tests with stub retriever and LLM: no models, no Qdrant, no network required."""
 
 from __future__ import annotations
 
-import json
-
 from fastapi.testclient import TestClient
 
-from agent.graph import AgentResult
 from app.main import app
+from llm.base import Message
 from retrieval.search import Hit
 
 PAYLOAD = {
@@ -27,96 +25,76 @@ class FakeRetriever:
         self.hits = hits if hits is not None else [Hit("blld2019_d35_k2", 0.91, PAYLOAD, "rerank")]
         self.calls: list[tuple] = []
 
-    def search(self, question, mode, limit, prefetch, threshold):
+    def search(self, question, mode, limit, prefetch, threshold, doc_ids=None):
         self.calls.append((question, mode, limit, prefetch, threshold))
         return list(self.hits)
 
 
-class FakeAgent:
-    def __init__(self, hits=None, answer="Theo Điều 35, phải báo trước 45 ngày."):
-        self.hits = hits if hits is not None else [Hit("blld2019_d35_k2", 0.91, PAYLOAD, "rerank")]
-        self.answer = answer
-        self.questions: list[str] = []
+class ScriptedLLM:
+    model = "scripted"
 
-    def run(self, question):
-        self.questions.append(question)
-        return AgentResult(
-            question=question,
-            route="vector_search",
-            answer=self.answer,
-            found=True,
-            hits=list(self.hits),
-            contexts=list(self.hits),
-            elapsed_ms=12.5,
-        )
+    def __init__(self, reply="Theo [1], phải báo trước 45 ngày."):
+        self.reply = reply
+        self.received: list[Message] = []
 
-    async def astream(self, question):
-        yield {"event": "meta", "data": {"question": question, "route": "vector_search"}}
-        yield {"event": "sources", "data": [hit.to_dict(include_text=False) for hit in self.hits]}
-        yield {"event": "token", "data": {"text": self.answer}}
-        yield {"event": "done", "data": {"answer": self.answer, "found": True, "elapsed_ms": 12.5}}
+    def chat(self, messages, temperature=0.0, max_tokens=800):
+        self.received = list(messages)
+        return self.reply
 
 
-def test_query_uses_agent_and_returns_citations():
+def test_query_returns_cited_answer():
     with TestClient(app) as client:
-        fake = FakeAgent()
-        app.state.agent = fake
-        response = client.post("/query", json={"question": "Phải báo trước bao nhiêu ngày?"})
-        assert response.status_code == 200
-        body = response.json()
-        assert body["mode"] == "agent"
-        assert body["route"] == "vector_search"
+        app.state.retriever = FakeRetriever()
+        llm = ScriptedLLM()
+        app.state.llm = llm
+        body = client.post("/query", json={"question": "Phải báo trước bao nhiêu ngày?"}).json()
+        assert body["mode"] == "hybrid_rerank"
         assert body["found"] is True
-        assert body["answer"].startswith("Theo Điều 35")
+        assert body["answer"] == "Theo [1], phải báo trước 45 ngày."
+        assert body["cited"] == ["blld2019_d35_k2"]
         assert body["results"][0]["citation"] == "Điều 35 khoản 2, Bộ luật Lao động 2019"
-        assert fake.questions == ["Phải báo trước bao nhiêu ngày?"]
+        assert "Phải báo trước bao nhiêu ngày?" in llm.received[-1].content
+
+
+def test_query_not_found_when_model_declines():
+    with TestClient(app) as client:
+        app.state.retriever = FakeRetriever()
+        app.state.llm = ScriptedLLM(reply="NOT_FOUND")
+        body = client.post("/query", json={"question": "Câu hỏi không có căn cứ?"}).json()
+        assert body["found"] is False
+        assert body["cited"] == []
 
 
 def test_query_retrieval_only_mode():
     with TestClient(app) as client:
         fake = FakeRetriever()
         app.state.retriever = fake
+        llm = ScriptedLLM()
+        app.state.llm = llm
         body = client.post(
-            "/query", json={"question": "Phải báo trước bao nhiêu ngày?", "use_agent": False}
+            "/query", json={"question": "Phải báo trước bao nhiêu ngày?", "answer": False}
         ).json()
         assert body["found"] is True
-        assert body["mode"] == "hybrid_rerank"
         assert body["answer"] is None
         assert body["results"][0]["citation"] == "Điều 35 khoản 2, Bộ luật Lao động 2019"
         assert fake.calls[0][0] == "Phải báo trước bao nhiêu ngày?"
+        assert llm.received == []
 
 
 def test_query_retrieval_only_not_found():
     with TestClient(app) as client:
         app.state.retriever = FakeRetriever(hits=[])
         body = client.post(
-            "/query", json={"question": "Câu hỏi không có căn cứ", "use_agent": False}
+            "/query", json={"question": "Câu hỏi không có căn cứ", "answer": False}
         ).json()
         assert body["found"] is False
         assert body["results"] == []
 
 
-def test_query_streams_sse_events():
-    with TestClient(app) as client:
-        app.state.agent = FakeAgent()
-        with client.stream(
-            "POST", "/query", json={"question": "Báo trước bao nhiêu ngày?", "stream": True}
-        ) as response:
-            assert response.status_code == 200
-            text = "".join(response.iter_text())
-        assert "event: meta" in text
-        assert "event: sources" in text
-        assert "event: token" in text
-        assert "event: done" in text
-        done_payload = [
-            line for line in text.splitlines() if line.startswith("data:") and '"found"' in line
-        ][-1]
-        assert json.loads(done_payload.split("data:", 1)[1])["found"] is True
-
-
 def test_query_validates_input():
     with TestClient(app) as client:
-        app.state.agent = FakeAgent()
+        app.state.retriever = FakeRetriever()
+        app.state.llm = ScriptedLLM()
         assert client.post("/query", json={"question": "a"}).status_code == 422
         assert client.post("/query", json={"question": "hợp lệ?", "mode": "sai"}).status_code == 422
         assert client.post("/query", json={"question": "hợp lệ?", "top_k": 0}).status_code == 422
@@ -133,7 +111,6 @@ def test_health_reports_services():
             "llm",
             "embed_backend",
             "rerank_backend",
-            "llm_provider",
         }
         assert body["status"] in {"ok", "degraded"}
 

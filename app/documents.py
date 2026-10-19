@@ -128,7 +128,6 @@ def process_document(
     client=None,
     embedder=None,
     collection: str | None = None,
-    load_neo4j: bool = True,
     processed_dir: Path = PROCESSED_DIR,
 ) -> DocumentRecord:
     """Parse, chunk, embed, and load one uploaded document into Qdrant."""
@@ -156,7 +155,9 @@ def process_document(
 
             embedder = get_embedder(settings.embed_backend, model_name=settings.embed_model)
         if client is None:
-            client = load_mod.get_client(settings.qdrant_url, settings.qdrant_api_key)
+            client = load_mod.get_client(
+                settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_path
+            )
         collection = collection or settings.collection
         load_mod.ensure_collection(client, collection, dense_dim=getattr(embedder, "dim", 1024))
 
@@ -166,17 +167,6 @@ def process_document(
             vectors = embedder.encode([item.embed_text for item in batch])
             embedded.extend(zip(batch, vectors, strict=True))
         loaded = load_mod.upsert_points(client, collection, embedded)
-
-        if load_neo4j:
-            try:
-                from ingestion import graph as graph_mod
-
-                driver = graph_mod.get_driver()
-                graph_mod.ensure_constraints(driver)
-                graph_mod.load_graph(driver, [spec], {spec.doc_id: chunks})
-                driver.close()
-            except Exception as exc:  # pragma: no cover - Neo4j optional
-                log.warning("graph load skipped for %s: %s", doc_id, exc)
 
         return store.update(
             doc_id,
